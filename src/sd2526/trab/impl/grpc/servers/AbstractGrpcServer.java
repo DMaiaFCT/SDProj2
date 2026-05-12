@@ -27,6 +27,7 @@ public abstract class AbstractGrpcServer extends AbstractServer {
 			builder.addService( s );
 		
 		this.server = builder.build();
+		sd2526.trab.impl.db.Hibernate.getInstance();
 	}
 
 	protected abstract List<GrpcController> controllers( String uri );

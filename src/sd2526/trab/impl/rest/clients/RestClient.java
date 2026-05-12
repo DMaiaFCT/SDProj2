@@ -25,11 +25,11 @@ import sd2526.trab.impl.utils.Sleep;
 public class RestClient {
 	static Logger Log = Logger.getLogger(RestClient.class.getName());
 
-	protected static final int READ_TIMEOUT = 3000;
-	protected static final int CONNECT_TIMEOUT = 3000;
+	protected static final int READ_TIMEOUT = 10000;
+	protected static final int CONNECT_TIMEOUT = 10000;
 
 	protected static final int MAX_DEADLINE = 30000;
-	protected static final int RETRY_SLEEP = 250;
+	protected static final int RETRY_SLEEP = 500;
 
 	final Client client;
 	final String serverURI;

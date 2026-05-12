@@ -21,9 +21,9 @@ public abstract class AbstractRestServer extends AbstractServer {
 	}
 
 	protected void start() {
+		sd2526.trab.impl.db.Hibernate.getInstance();
 		
 		ResourceConfig config = new ResourceConfig();
-		
 		registerResources( config );
 		
 		JdkHttpServerFactory.createHttpServer( URI.create(serverURI.replace(IP.hostAddress(), INETADDR_ANY)), config);
