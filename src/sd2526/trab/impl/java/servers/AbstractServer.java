@@ -11,12 +11,14 @@ public abstract class AbstractServer {
 	final protected Logger Log;
 	final protected String serverURI;
 	final protected String service;
+    final protected int port;
 	
-	protected AbstractServer(Logger log, String service, String serverURI) {
+	protected AbstractServer(Logger log, String service, String serverURI, int port) {
 		this.Log = log;
 		this.service = service;
 		this.serverURI = serverURI;
-		System.out.println("MY DOMAIN:" + IP.domain() );
+        this.port = port;
+        System.out.println("MY DOMAIN:" + IP.domain() );
 	}
 	
 	protected String serviceName() {

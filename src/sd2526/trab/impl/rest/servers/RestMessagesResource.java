@@ -1,8 +1,13 @@
 package sd2526.trab.impl.rest.servers;
 
 import java.util.List;
+import java.util.logging.Logger;
 
 import jakarta.inject.Singleton;
+import jakarta.ws.rs.WebApplicationException;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.HttpHeaders;
+import jakarta.ws.rs.core.Response;
 import sd2526.trab.api.Message;
 import sd2526.trab.api.java.Messages;
 import sd2526.trab.api.rest.RestMessages;
@@ -13,6 +18,11 @@ import sd2526.trab.impl.java.servers.JavaMessages;
 
 @Singleton
 public class RestMessagesResource extends RestResource implements RestMessages, RestAdminMessages {
+
+    private static final Logger Log = Logger.getLogger(RestMessagesResource.class.getName());
+
+    @Context
+    private HttpHeaders headers;
 	
 	static boolean isGateway = false;
 	
@@ -61,16 +71,29 @@ public class RestMessagesResource extends RestResource implements RestMessages, 
 
 	@Override
 	public void remotePostMessage(Message m) {
+        requireServerSecret();
 		super.resultOrThrow( ((AdminMessages)impl()).remotePostMessage(m));
 	}
 
 	@Override
 	public void remoteDeleteMessage(String mid) {
+        requireServerSecret();
 		super.resultOrThrow( ((AdminMessages)impl()).remoteDeleteMessage(mid));
 	}
 
 	@Override
 	public void remoteDeleteUserInbox(String name) {
+        requireServerSecret();
 		super.resultOrThrow( ((AdminMessages)impl()).remoteDeleteUserInbox(name));
 	}
+
+    private void requireServerSecret() {
+        String expectedSecret = System.getProperty("service.secret");
+        String providedSecret = headers.getHeaderString("X-Service-Secret");
+
+        if (expectedSecret != null && !expectedSecret.equals(providedSecret)) {
+            Log.warning("Blocked unauthorized access attempt. Invalid or missing secret.");
+            throw new WebApplicationException(Response.Status.FORBIDDEN);
+        }
+    }
 }

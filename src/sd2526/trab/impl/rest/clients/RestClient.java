@@ -44,6 +44,14 @@ public class RestClient {
 		config.property(ClientProperties.READ_TIMEOUT, READ_TIMEOUT);
 		config.property(ClientProperties.CONNECT_TIMEOUT, CONNECT_TIMEOUT);
 		this.client = ClientBuilder.newClient(config);
+
+        this.client.register((jakarta.ws.rs.client.ClientRequestFilter) requestContext -> {
+            String secret = System.getProperty("service.secret");
+            if (secret != null) {
+                requestContext.getHeaders().add("X-Service-Secret", secret);
+            }
+        });
+
 		this.target = client.target( serverURI ).path( servicePath );
 	}
 

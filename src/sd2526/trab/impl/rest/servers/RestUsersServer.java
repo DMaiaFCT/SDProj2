@@ -1,5 +1,6 @@
 package sd2526.trab.impl.rest.servers;
 
+import java.net.UnknownHostException;
 import java.util.logging.Logger;
 
 import org.glassfish.jersey.server.ResourceConfig;
@@ -11,7 +12,7 @@ public class RestUsersServer extends AbstractRestServer {
 	
 	private static Logger Log = Logger.getLogger(RestUsersServer.class.getName());
 
-	RestUsersServer() {
+	RestUsersServer() throws UnknownHostException {
 		super( Log, Users.SERVICE_NAME , PORT);
 	}
 	
@@ -20,7 +21,7 @@ public class RestUsersServer extends AbstractRestServer {
 		config.register(RestUsersResource.class ); 
 	}
 	
-	public static void main(String[] args) {
+	public static void main(String[] args) throws UnknownHostException {
 		new RestUsersServer().start();
 	}	
 }
