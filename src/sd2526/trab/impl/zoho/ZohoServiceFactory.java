@@ -8,7 +8,7 @@ public class ZohoServiceFactory {
     public static OAuth20Service buildService(String clientId, String clientSecret) {
         return new ServiceBuilder(clientId)
                 .apiSecret(clientSecret)
-                .defaultScope("ZohoMail.messages.ALL,ZohoMail.accounts.READ")
+                .defaultScope("ZohoMail.messages.ALL,ZohoMail.accounts.READ,ZohoMail.folders.READ")
                 .debug()
                 .build(ZohoApi20.instance());
     }

@@ -20,15 +20,13 @@ public class Zoho {
 
     static final String CLIENT_ID = "1000.OSD1FRO943P8LWDAGY57WAUUPJBG1Z";
     static final String CLIENT_SECRET = "013c57580b5583a9c6dd6b7e6a718bba8f7fc15fa7";
-    static final String REFRESH_TOKEN = "1000.f7044213801b56912f8d12fe4ad67089.0aec49724235ceafb1414fed6a3b1f38";
+    static final String REFRESH_TOKEN = "1000.ae70bdd32a6b2c0a8eb467496aa3c978.843a0ca8af8b5e5fd1d4b6170d73edb5";
 
     private static final String ACCOUNTS = "/accounts";
     private static final String MESSAGES = "/messages";
     private static final String FOLDERS = "/folders";
     private static final String CONTENT = "/content";
     private static final String VIEW = "/view";
-
-    private static final String INBOX_FOLDER_ID = "0";
 
     public static final String SUBJECT_PREFIX = "[SD-MSG]";
 
@@ -39,6 +37,8 @@ public class Zoho {
 
     //para não chamar getAccount() em todas as operações
     private String cachedAccountId;
+
+    private String cachedInboxFolderId;
 
     private Zoho() {
         service = ZohoServiceFactory.buildService(CLIENT_ID, CLIENT_SECRET);
@@ -77,6 +77,29 @@ public class Zoho {
             cachedAccountId = account.accountId();
         }
         return cachedAccountId;
+    }
+
+    public synchronized String getInboxFolderId() throws Exception {
+        if (cachedInboxFolderId == null) {
+            var accountId = getAccountId();
+            var url = MAIL_API_BASE + ACCOUNTS + "/" + accountId + FOLDERS;
+
+            var accessToken = new OAuth2AccessToken(tokenManager.getValidAccessToken());
+            OAuthRequest request = new OAuthRequest(Verb.GET, url);
+            service.signRequest(accessToken, request);
+
+            try (Response response = service.execute(request)) {
+                if (response.isSuccessful()) {
+                    var reply = JSON.decode(response.getBody(), ZohoFolderListReply.class);
+                    cachedInboxFolderId = reply.data().stream()
+                            .filter(f -> "Sent".equals(f.folderType()))
+                            .map(ZohoFolder::folderId)
+                            .findFirst()
+                            .orElseThrow(() -> new Exception("Sent folder not found"));
+                } else throw new Exception("getInboxFolderId failed: " + response.getCode() + "/" + response.getBody());
+            }
+        }
+        return cachedInboxFolderId;
     }
 
     public String sendMessage(Message msg) throws Exception {
@@ -128,7 +151,7 @@ public class Zoho {
     public Message getEmailContent(String zohoMsgId) throws Exception {
         var accountId = getAccountId();
 
-        var url = MAIL_API_BASE + ACCOUNTS + "/" + accountId + FOLDERS + "/" + INBOX_FOLDER_ID + MESSAGES + "/" + zohoMsgId + CONTENT;
+        var url = MAIL_API_BASE + ACCOUNTS + "/" + accountId + FOLDERS + "/" + getInboxFolderId() + MESSAGES + "/" + zohoMsgId + CONTENT;
 
         var accessToken = new OAuth2AccessToken(tokenManager.getValidAccessToken());
         OAuthRequest request = new OAuthRequest(Verb.GET, url);
@@ -148,7 +171,7 @@ public class Zoho {
 
     public boolean deleteEmail(String zohoMsgId) throws Exception {
         var accountId = getAccountId();
-        var url = MAIL_API_BASE + ACCOUNTS + "/" + accountId + FOLDERS + "/" + INBOX_FOLDER_ID + MESSAGES + "/" + zohoMsgId + "?expunge=true";
+        var url = MAIL_API_BASE + ACCOUNTS + "/" + accountId + FOLDERS + "/" + getInboxFolderId() + MESSAGES + "/" + zohoMsgId + "?expunge=true";
 
         var accessToken = new OAuth2AccessToken(tokenManager.getValidAccessToken());
         OAuthRequest request = new OAuthRequest(Verb.DELETE, url);
