@@ -1,16 +1,11 @@
 package sd2526.trab.impl.java.servers;
 
+import static sd2526.trab.api.java.Result.ErrorCode.*;
 import static sd2526.trab.api.java.Result.error;
 import static sd2526.trab.api.java.Result.ok;
-import static sd2526.trab.api.java.Result.ErrorCode.BAD_REQUEST;
-import static sd2526.trab.api.java.Result.ErrorCode.FORBIDDEN;
-import static sd2526.trab.api.java.Result.ErrorCode.INTERNAL_ERROR;
 
 import java.time.Duration;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -27,11 +22,10 @@ import sd2526.trab.api.User;
 import sd2526.trab.api.java.Messages;
 import sd2526.trab.api.java.Result;
 import sd2526.trab.api.java.Result.ErrorCode;
+import sd2526.trab.impl.Zoho;
 import sd2526.trab.impl.api.java.AdminMessages;
-import sd2526.trab.impl.db.DB;
 import sd2526.trab.impl.java.clients.Clients;
 import sd2526.trab.impl.utils.IP;
-import sd2526.trab.impl.utils.Sleep;
 
 //em vez de hibernate, usar o zoho
 
@@ -39,7 +33,6 @@ public class JavaZohoMessages extends JavaBaseService implements Messages, Admin
 
     private static final int REMOTE_COMM_DEADLINE = 90000;
     private static final long MESSAGES_CACHE_EXPIRATION = 30000;
-    private static final long DIRTY_INBOX_CACHE_EXPIRATION = 10000;
 
     final JobDispatcher jobs;
     final AtomicLong counter = new AtomicLong(0L);
@@ -48,26 +41,6 @@ public class JavaZohoMessages extends JavaBaseService implements Messages, Admin
 
     protected final Cache<String, Message> messagesCache = CacheBuilder.newBuilder()
             .expireAfterWrite(Duration.ofMillis(MESSAGES_CACHE_EXPIRATION))
-            .build();
-
-    protected final Cache<String, String> gcDeletedMessageCache = CacheBuilder.newBuilder()
-            .expireAfterWrite(Duration.ofMillis(DIRTY_INBOX_CACHE_EXPIRATION))
-            .removalListener((removed) -> {
-
-                // When triggered, removes any orphaned messages in the database,
-                // i.e. messages that are no longer referenced by any inbox...
-
-                var sqlExpr = """
-                        SELECT * FROM Message m
-                        	WHERE NOT EXISTS 
-                        		(SELECT 1 FROM InboxEntry e WHERE e.mid = m.id)
-                        """;
-
-                DB.transaction((hibernate) ->
-                        hibernate.select(sqlExpr, Message.class)
-                                .thenWith((orphans) -> hibernate.deleteMany(orphans))
-                );
-            })
             .build();
 
     private JavaZohoMessages() {
@@ -90,33 +63,71 @@ public class JavaZohoMessages extends JavaBaseService implements Messages, Admin
             return error(BAD_REQUEST);
 
         return getUser(name, pwd)
-                .then(() -> DB.getOne(new InboxEntry(mid, name), InboxEntry.class))
-                .then(() -> DB.getOne(mid, Message.class));
+                .thenWith(user -> {
+                    try {
+                        var zohoId = Zoho.getInstance().findZohoMessageId(mid);
+                        if (zohoId == null)
+                            return error(NOT_FOUND);
+
+                        var msg = Zoho.getInstance().getEmailContent(zohoId);
+                        return msg != null ? ok(msg) : error(NOT_FOUND);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        return error(INTERNAL_ERROR);
+                    }
+                });
     }
 
     @Override
     public Result<List<String>> getAllInboxMessages(String name, String pwd) {
         Log.info(() -> "getAllInboxMessages : name = %s, pwd = %s\n".formatted(name, pwd));
 
-        var sqlExpr = "SELECT m.mid FROM InboxEntry m WHERE m.recipient = '%s'".formatted(name);
         return getUser(name, pwd)
-                .then(() -> DB.select(sqlExpr, String.class));
+                .thenWith(user -> {
+                    try {
+                        var emails = Zoho.getInstance().listEmails();
+                        var ids = emails.stream()
+                                .filter(e -> e.subject() != null && e.subject().startsWith(Zoho.SUBJECT_PREFIX))
+                                .map(e -> e.subject().substring(Zoho.SUBJECT_PREFIX.length()))
+                                .toList();
+                        return ok(ids);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        return error(INTERNAL_ERROR);
+                    }
+                });
     }
 
     @Override
     public Result<List<String>> searchInbox(String name, String pwd, String query) {
         Log.info(() -> "searchInbox : name = %s, pwd = %s, query=%s\n".formatted(name, pwd, query));
 
-        var sqlExpr = """
-                SELECT m.id FROM Message m
-                INNER JOIN InboxEntry e
-                ON e.mid = m.id 
-                AND e.recipient = '%s'
-                WHERE (upper(m.subject) LIKE '%%%s%%' OR upper(m.contents) LIKE '%%%s%%')
-                """.formatted(name, query.toUpperCase(), query.toUpperCase());
-
         return getUser(name, pwd)
-                .then(() -> DB.select(sqlExpr, String.class));
+                .thenWith(user -> {
+                    try {
+                        var emails = Zoho.getInstance().listEmails();
+                        var upperQuery = query.toUpperCase();
+                        var results = new ArrayList<String>();
+
+                        for (var item : emails) {
+                            if (item.subject() == null || !item.subject().startsWith(Zoho.SUBJECT_PREFIX))
+                                continue;
+
+                            var msg = Zoho.getInstance().getEmailContent(item.messageId());
+                            if (msg == null) continue;
+
+                            var subjectMatch = msg.getSubject() != null && msg.getSubject().toUpperCase().contains(upperQuery);
+                            var contentsMatch = msg.getContents() != null && msg.getContents().toUpperCase().contains(upperQuery);
+
+                            if (subjectMatch || contentsMatch)
+                                results.add(msg.getId());
+                        }
+                        return ok(results);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        return error(INTERNAL_ERROR);
+                    }
+                });
     }
 
     @Override
@@ -124,9 +135,18 @@ public class JavaZohoMessages extends JavaBaseService implements Messages, Admin
         Log.info(() -> "removeInboxMessage : name = %s, mid = %s, pwd = %s\n".formatted(name, mid, pwd));
 
         return getUser(name, pwd)
-                .then(() -> DB.deleteOne(new InboxEntry(mid, name))).mapToVoid()
-                .then(() -> {
-                    gcDeletedMessageCache.put(mid, mid);
+                .thenWith(user -> {
+                    try {
+                        var zohoId = Zoho.getInstance().findZohoMessageId(mid);
+                        if (zohoId == null)
+                            return error(NOT_FOUND);
+
+                        Zoho.getInstance().deleteEmail(zohoId);
+                        return ok();
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        return error(INTERNAL_ERROR);
+                    }
                 });
     }
 
@@ -138,7 +158,7 @@ public class JavaZohoMessages extends JavaBaseService implements Messages, Admin
         return getUser(name, pwd)
                 .then(() -> getCachedMessage(mid))
                 .thenWith(msg -> name.equals(getName(msg.senderAddress())) ? ok(msg) : error(FORBIDDEN))
-                .thenWith((msg) -> doAsyncDelete(msg));
+                .thenWith(msg -> doAsyncDelete(msg));
     }
 
 
@@ -152,91 +172,33 @@ public class JavaZohoMessages extends JavaBaseService implements Messages, Admin
         }
     }
 
-    protected Result<Set<String>> checkUsers(Collection<String> addresses) {
-        return Clients.AdminUsersClient.get().checkUsers(addresses);
-    }
-
-    private void deliverToKnownLocalRecipients(Collection<String> addresses, Message msg) {
-        Log.info(() -> "deliverToKnownLocalRecipients : local known addresses = %s, msg = %s\n".formatted(addresses, msg));
-
-        DB.transaction((hibernate) -> {
-            hibernate.persistOne(msg);
-            for (var address : addresses)
-                hibernate.persistOne(new InboxEntry(msg.getId(), getName(address)));
-
-            return ok();
-        });
-
-    }
-
-    private void reportUnknownLocalRecipients(Collection<String> addresses, Message msg) {
-        Log.info(() -> "reportUnknownLocalRecipients : unknown addresses = %s, msg = %s\n".formatted(addresses, msg));
-
-        var senderDomain = super.getDomain(msg.senderAddress());
-
-        try {
-            for (var recipientAddress : addresses) {
-                var errorMsg = msg.cloneWithUserNotFound(recipientAddress);
-                if (super.isLocalDomain(senderDomain)) {
-                    DB.transaction((hibernate) -> {
-                        hibernate.persistOne(new InboxEntry(errorMsg.getId(), msg.senderName()));
-                        hibernate.persistOne(errorMsg);
-                        return ok();
-                    });
-                } else doAsyncRemotePost(senderDomain, errorMsg);
-            }
-        } catch (Exception x) {
-            x.printStackTrace();
-        }
-    }
-
-    private Result<Void> postToLocalInboxes(Collection<String> addresses, Message msg) {
-        Log.info(() -> "postToLocalInboxes : localRecipients = %s, msg = %s\n".formatted(addresses, msg));
-
-        return checkUsers(addresses)
-                .thenWith(unknownAddresses -> {
-
-                    var knownAddresses = new HashSet<>(addresses);
-                    knownAddresses.removeAll(unknownAddresses);
-
-                    if (knownAddresses.size() > 0)
-                        deliverToKnownLocalRecipients(knownAddresses, msg);
-
-                    if (unknownAddresses.size() > 0)
-                        reportUnknownLocalRecipients(unknownAddresses, msg);
-
-                    return ok();
-                });
-    }
-
     @Override
     public Result<Void> remotePostMessage(Message msg) {
         Log.info(() -> "postRemoteMessage : msg = %s\n".formatted(msg));
 
-        var localAddresses = getLocalRecipientAddresses(msg);
-        return postToLocalInboxes(localAddresses, msg);
-    }
-
-    private Result<Void> deleteFromLocalInbox(String mid) {
-        Log.info(() -> "deleteFromLocalInbox : mid = %s\n".formatted(mid));
-
-        var sql = "SELECT * FROM InboxEntry e WHERE e.mid = '%s'".formatted(mid);
-
-        return DB.transaction(hibernate -> {
-
-            hibernate.getOne(mid, Message.class)
-                    .thenWith(msg -> hibernate.deleteOne(msg));
-
-            return hibernate.select(sql, InboxEntry.class)
-                    .thenWith((entries) -> hibernate.deleteMany(entries));
-        });
+        try {
+            Zoho.getInstance().sendMessage(msg);
+            return ok();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return error(INTERNAL_ERROR);
+        }
     }
 
     @Override
     public Result<Void> remoteDeleteMessage(String mid) {
         Log.info(() -> "remoteDeleteMessage : mid = %s\n".formatted(mid));
 
-        return deleteFromLocalInbox(mid);
+        try {
+            var zohoId = Zoho.getInstance().findZohoMessageId(mid);
+            if (zohoId != null)
+                Zoho.getInstance().deleteEmail(zohoId);
+
+            return ok();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return error(INTERNAL_ERROR);
+        }
     }
 
     protected Result<Message> getCachedMessage(String mid) {
@@ -265,59 +227,102 @@ public class JavaZohoMessages extends JavaBaseService implements Messages, Admin
 
     public Result<String> doAsyncPost(User sender, Message msg) {
 
+        // If we've seen this message before (same originId), return the existing ID.
+        // This is the idempotency guard — repeated posts with the same message
+        // object (same sender + creationTime) are silently de-duped.
         return getCachedMessage(msg.originId()).mapValue(Message::getId).orElse(() -> {
-
 
             msg.setId("%s+%04d".formatted(THIS_DOMAIN, counter.incrementAndGet()));
 
-            messagesCache.put(msg.originId(), new Message(msg)); // For ensuring idempotency...
+            messagesCache.put(msg.originId(), new Message(msg)); // idempotency entry
 
             msg.setSender("%s <%s@%s>".formatted(sender.getDisplayName(), sender.getName(), sender.getDomain()));
 
-            messagesCache.put(msg.getId(), msg); // For enabling delete of messages...
+            messagesCache.put(msg.getId(), msg); // delete-within-30s entry
 
-            var localAdresses = getLocalRecipientAddresses(msg);
+            var localAddresses = getLocalRecipientAddresses(msg);
             var remoteAddresses = getRemoteRecipientAddresses(msg);
 
-            System.out.println("Local Recipients:" + localAdresses);
-            System.out.println("Remote Recipients:" + remoteAddresses);
+            if (!localAddresses.isEmpty())
+                postToZohoInbox(localAddresses, msg);
 
-            if (localAdresses.size() > 0)
-                postToLocalInboxes(localAdresses, msg);
-
-            if (remoteAddresses.size() > 0) {
-
+            if (!remoteAddresses.isEmpty()) {
                 var remoteTargets = remoteAddresses.stream().collect(
-                        Collectors.groupingBy(super::getDomain, Collectors.mapping(address -> address, Collectors.toSet())));
+                        Collectors.groupingBy(super::getDomain, Collectors.toSet()));
 
                 for (var e : remoteTargets.entrySet()) {
                     var domain = e.getKey();
-                    var domainRecipientAddressess = e.getValue();
+                    var domainRecipients = e.getValue();
 
                     jobs.submit(domain, () -> {
-                        var res = super.reTry(() -> Clients.AdminMessagesClient.get(domain).remotePostMessage(msg), REMOTE_COMM_DEADLINE);
-                        if (res.error() == ErrorCode.TIMEOUT) {
-                            for (var address : domainRecipientAddressess)
-                                postToLocalInboxes(Set.of(msg.senderAddress()), msg.cloneWithTimeout(address));
-                        }
-                    });
+                        var res = super.reTry(
+                                () -> Clients.AdminMessagesClient.get(domain).remotePostMessage(msg),
+                                REMOTE_COMM_DEADLINE);
 
+                        if (res.error() == ErrorCode.TIMEOUT)
+                            for (var address : domainRecipients)
+                                postToZohoInbox(Set.of(msg.senderAddress()), msg.cloneWithTimeout(address));
+                    });
                 }
             }
             return Result.ok(msg.getId());
         });
     }
 
+    private void postToZohoInbox(Collection<String> addresses, Message msg) {
+        try {
+            var unknownResult = Clients.AdminUsersClient.get().checkUsers(addresses);
+
+            var knownAddresses = new HashSet<>(addresses);
+            if (unknownResult.isOK())
+                knownAddresses.removeAll(unknownResult.value());
+
+            if (!knownAddresses.isEmpty())
+                Zoho.getInstance().sendMessage(msg);
+
+            if (unknownResult.isOK() && !unknownResult.value().isEmpty())
+                reportUnknownRecipients(unknownResult.value(), msg);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void reportUnknownRecipients(Collection<String> unknownAddresses, Message msg) {
+        var senderDomain = super.getDomain(msg.senderAddress());
+
+        for (var address : unknownAddresses) {
+            var errorMsg = msg.cloneWithUserNotFound(address);
+            if (super.isLocalDomain(senderDomain)) {
+                try {
+                    Zoho.getInstance().sendMessage(errorMsg);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            } else {
+                doAsyncRemotePost(senderDomain, errorMsg);
+            }
+        }
+    }
+
     public Result<Void> doAsyncDelete(Message msg) {
         var domains = msg.getDestination().stream().map(r -> r.split("@")[1]).collect(Collectors.toSet());
-        for (var domain : domains)
-            if (domain.equals(IP.domain()))
-                deleteFromLocalInbox(msg.getId());
-            else
-                jobs.submit(domain, () -> {
-                    super.reTry(() -> Clients.AdminMessagesClient.get(domain).remoteDeleteMessage(msg.getId()), REMOTE_COMM_DEADLINE);
-                });
-        return Result.ok();
+        for (var domain : domains) {
+            if (domain.equals(IP.domain())) {
+                try {
+                    var zohoId = Zoho.getInstance().findZohoMessageId(msg.getId());
+                    if (zohoId != null)
+                        Zoho.getInstance().deleteEmail(zohoId);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            } else {
+                jobs.submit(domain, () ->
+                        super.reTry(() -> Clients.AdminMessagesClient.get(domain)
+                                .remoteDeleteMessage(msg.getId()), REMOTE_COMM_DEADLINE));
+            }
+        }
+        return ok();
     }
 
     public void doAsyncRemotePost(String remoteDomain, Message msg) {
@@ -331,19 +336,15 @@ public class JavaZohoMessages extends JavaBaseService implements Messages, Admin
     public Result<Void> remoteDeleteUserInbox(String name) {
         Log.info(() -> "remoteDeleteUserInbox : name = %s\n".formatted(name));
 
-        var sqlExpr = "SELECT * FROM InboxEntry e WHERE e.recipient = '%s'".formatted(name);
-
-        return DB.transaction(hibernate -> {
-
-            return hibernate.select(sqlExpr, InboxEntry.class)
-                    .thenWith((entries) -> {
-                        hibernate.deleteMany(entries);
-                        for (var e : entries)
-                            gcDeletedMessageCache.put(e.mid, e.mid);
-
-                        return ok();
-                    });
-        });
+        try {
+            var emails = Zoho.getInstance().listEmails();
+            for (var item : emails)
+                Zoho.getInstance().deleteEmail(item.messageId());
+            return ok();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return error(INTERNAL_ERROR);
+        }
 
     }
 
