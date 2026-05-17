@@ -41,8 +41,11 @@ public abstract class AbstractGrpcServer extends AbstractServer {
             String ksFile = System.getProperty("javax.net.ssl.keyStore");
             String ksPass = System.getProperty("javax.net.ssl.keyStorePassword");
 
-            if (ksFile == null || ksPass == null) {
-                log.severe("CRITICAL: Keystore properties are missing. Server will likely fail to start securely.");
+            if (ksFile == null || ksFile.trim().isEmpty()) {
+                ksFile = "/home/sd/users-domain-server.ks";
+            }
+            if (ksPass == null || ksPass.trim().isEmpty() || "unknown".equalsIgnoreCase(ksPass)) {
+                ksPass = "password";
             }
 
             KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());

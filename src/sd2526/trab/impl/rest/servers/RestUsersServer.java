@@ -20,8 +20,15 @@ public class RestUsersServer extends AbstractRestServer {
 	void registerResources(ResourceConfig config) {
 		config.register(RestUsersResource.class ); 
 	}
-	
+
+
+
 	public static void main(String[] args) throws UnknownHostException {
+        System.setProperty("javax.net.ssl.keyStore", "/home/sd/users-domain-server.ks");
+        System.setProperty("javax.net.ssl.keyStorePassword", "password");
+        System.setProperty("javax.net.ssl.trustStore", "/home/sd/truststore.ks");
+        System.setProperty("javax.net.ssl.trustStorePassword", "changeit");
+
 		new RestUsersServer().start();
 	}	
 }

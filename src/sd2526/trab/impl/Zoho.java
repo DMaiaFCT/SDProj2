@@ -1,4 +1,7 @@
 package sd2526.trab.impl;
+import sd2526.trab.impl.zoho.msgs.ZohoFolderListReply;
+import sd2526.trab.impl.zoho.msgs.ZohoFolder;
+
 
 import com.github.scribejava.core.model.OAuth2AccessToken;
 import com.github.scribejava.core.model.OAuthRequest;
