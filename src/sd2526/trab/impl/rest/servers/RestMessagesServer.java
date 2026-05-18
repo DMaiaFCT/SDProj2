@@ -22,7 +22,10 @@ public class RestMessagesServer extends AbstractRestServer {
 	}
 
 	public static void main(String[] args) throws UnknownHostException {
-        System.setProperty("javax.net.ssl.keyStore", "/home/sd/users-domain-server.ks");
+        String hostName = java.net.InetAddress.getLocalHost().getHostName();
+        String resolvedKeyStore = "/home/sd/" + hostName + ".ks";
+
+        System.setProperty("javax.net.ssl.keyStore", resolvedKeyStore);
         System.setProperty("javax.net.ssl.keyStorePassword", "password");
         System.setProperty("javax.net.ssl.trustStore", "/home/sd/truststore.ks");
         System.setProperty("javax.net.ssl.trustStorePassword", "changeit");

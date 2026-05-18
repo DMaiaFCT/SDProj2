@@ -36,14 +36,47 @@ public class RestClient {
 	final ClientConfig config;
 
 	final WebTarget target;
-	
-	protected RestClient(String serverURI, String servicePath ) {
-		this.serverURI = serverURI;
-		this.config = new ClientConfig();
 
-		config.property(ClientProperties.READ_TIMEOUT, READ_TIMEOUT);
-		config.property(ClientProperties.CONNECT_TIMEOUT, CONNECT_TIMEOUT);
-		this.client = ClientBuilder.newClient(config);
+    protected RestClient(String serverURI, String servicePath ) {
+        this.serverURI = serverURI;
+        this.config = new ClientConfig();
+
+        config.property(ClientProperties.READ_TIMEOUT, READ_TIMEOUT);
+        config.property(ClientProperties.CONNECT_TIMEOUT, CONNECT_TIMEOUT);
+
+        ClientBuilder clientBuilder = ClientBuilder.newBuilder().withConfig(config);
+
+        try {
+            String trustStoreFilename = System.getProperty("javax.net.ssl.trustStore");
+            if (trustStoreFilename == null || trustStoreFilename.trim().isEmpty()) {
+                trustStoreFilename = "/home/sd/truststore.ks"; // Safety fallback
+            }
+            String trustStorePassword = System.getProperty("javax.net.ssl.trustStorePassword");
+            if (trustStorePassword == null || trustStorePassword.trim().isEmpty() || "unknown".equalsIgnoreCase(trustStorePassword)) {
+                trustStorePassword = "changeit";
+            }
+
+            java.security.KeyStore trustStore = java.security.KeyStore.getInstance(java.security.KeyStore.getDefaultType());
+            try (java.io.FileInputStream input = new java.io.FileInputStream(trustStoreFilename)) {
+                trustStore.load(input, trustStorePassword.toCharArray());
+            }
+
+            javax.net.ssl.TrustManagerFactory tmf = javax.net.ssl.TrustManagerFactory.getInstance(javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init(trustStore);
+
+            javax.net.ssl.SSLContext sslContext = javax.net.ssl.SSLContext.getInstance("TLS");
+            sslContext.init(null, tmf.getTrustManagers(), null);
+
+            clientBuilder.sslContext(sslContext);
+
+            // Bypass strict hostname matching for server-to-server REST calls to prevent SAN bugs
+            clientBuilder.hostnameVerifier((hostname, session) -> true);
+
+        } catch (Exception e) {
+            System.err.println("Failed to initialize REST client SSL context: " + e.getMessage());
+        }
+
+        this.client = clientBuilder.build();
 
         this.client.register((jakarta.ws.rs.client.ClientRequestFilter) requestContext -> {
             String secret = System.getProperty("service.secret");
@@ -52,8 +85,8 @@ public class RestClient {
             }
         });
 
-		this.target = client.target( serverURI ).path( servicePath );
-	}
+        this.target = client.target( serverURI ).path( servicePath );
+    }
 
 	protected <T> Result<T> reTry(Supplier<Result<T>> func) {
 		long T0 = System.currentTimeMillis();

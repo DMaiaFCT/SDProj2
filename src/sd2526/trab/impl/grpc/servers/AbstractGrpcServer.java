@@ -38,15 +38,11 @@ public abstract class AbstractGrpcServer extends AbstractServer {
                 java.net.InetAddress.getLocalHost().getHostName(), port, GRPC_CTX), port);
 
         try {
-            String ksFile = System.getProperty("javax.net.ssl.keyStore");
-            String ksPass = System.getProperty("javax.net.ssl.keyStorePassword");
-
-            if (ksFile == null || ksFile.trim().isEmpty()) {
-                ksFile = "/home/sd/users-domain-server.ks";
-            }
-            if (ksPass == null || ksPass.trim().isEmpty() || "unknown".equalsIgnoreCase(ksPass)) {
-                ksPass = "password";
-            }
+            String hostName = java.net.InetAddress.getLocalHost().getHostName();
+            String ksFile = "/home/sd/" + hostName + ".ks";
+            String ksPass = "password";
+            System.setProperty("javax.net.ssl.trustStore", "/home/sd/truststore.ks");
+            System.setProperty("javax.net.ssl.trustStorePassword", "changeit");
 
             KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
             try (var is = new FileInputStream(ksFile)) {
