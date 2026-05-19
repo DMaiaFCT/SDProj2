@@ -12,7 +12,7 @@ import sd2526.trab.impl.discovery.Discovery;
 
 public class RestZohoServer extends AbstractRestServer {
 
-    public static final int PORT = 4569;
+    public static final int PORT = 8085;
 
     private static final Logger Log = Logger.getLogger(RestZohoServer.class.getName());
 
