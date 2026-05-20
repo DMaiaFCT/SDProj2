@@ -11,7 +11,7 @@ public class ZohoInitialRefreshToken {
 
     public static void main(String[] args) throws Exception {
 
-        String grantCode = "1000.686013ff93040acc22fca6a150e0e609.c2389145ae89a09f803bab3a19924e29";
+        String grantCode = "1000.ab3726c88161c10ed6cd6187c34b127b.a3bb7a82906622669668f18b3c2d4080";
 
         String body = "code=" + grantCode
                 + "&client_id=" + Zoho.CLIENT_ID
