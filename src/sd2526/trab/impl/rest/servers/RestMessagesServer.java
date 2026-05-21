@@ -18,7 +18,9 @@ public class RestMessagesServer extends AbstractRestServer {
 
 	@Override
 	void registerResources(ResourceConfig config) {
-		config.register(RestMessagesResource.class);
+        config.register(RestMessagesResource.class);
+        config.register(VersionHeaderHandler.class);
+
 	}
 
 	public static void main(String[] args) throws UnknownHostException {

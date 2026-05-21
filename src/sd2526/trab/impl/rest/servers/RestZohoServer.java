@@ -20,7 +20,8 @@ public class RestZohoServer extends AbstractRestServer {
 
     @Override
     void registerResources(ResourceConfig config) {
-        config.register(RestZohoResource.class);
+        config.registerInstances(RestMessagesResource.class);
+        config.register(VersionHeaderHandler.class);
     }
 
     public static void main(String[] args) throws UnknownHostException {
