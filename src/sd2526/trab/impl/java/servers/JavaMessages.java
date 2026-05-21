@@ -158,14 +158,16 @@ public class JavaMessages extends JavaBaseService implements Messages, AdminMess
             SyncPoint.getSyncPoint().waitForVersion(clientReadThreshold);
         }
 
+        // resolve problema no teste 110d. normalmente "'" é só um delimiter, substituir por "''" arranja isso.
+        String sanitizedQuery = query.replace("'", "''").toUpperCase();
+
         var sqlExpr = """
              SELECT m.id FROM Message m
              WHERE EXISTS (
-                SELECT 1 FROM InboxEntry e 
-                WHERE e.mid = m.id AND e.recipient = '%s'
+                SELECT 1 FROM InboxEntry e WHERE e.mid = m.id AND e.recipient = '%s'
              )
              AND (upper(m.subject) LIKE '%%%s%%' OR upper(m.contents) LIKE '%%%s%%')
-             """.formatted(name, query.toUpperCase(), query.toUpperCase());
+             """.formatted(name, sanitizedQuery, sanitizedQuery);
 
         return getUser(name, pwd )
                 .then( () -> DB.select( sqlExpr, String.class));
