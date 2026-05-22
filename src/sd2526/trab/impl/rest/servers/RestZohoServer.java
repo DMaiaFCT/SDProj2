@@ -20,23 +20,13 @@ public class RestZohoServer extends AbstractRestServer {
 
     @Override
     void registerResources(ResourceConfig config) {
-        config.registerInstances(RestMessagesResource.class);
+        config.registerInstances(new RestZohoResource());
         config.register(VersionHeaderHandler.class);
     }
 
     public static void main(String[] args) throws UnknownHostException {
-        String hostName = java.net.InetAddress.getLocalHost().getHostName();
-        String resolvedKeyStore = "/home/sd/" + hostName + ".ks";
-
-        System.setProperty("javax.net.ssl.keyStore", resolvedKeyStore);
-        System.setProperty("javax.net.ssl.keyStorePassword", "password");
-        System.setProperty("javax.net.ssl.trustStore", "/home/sd/truststore.ks");
-        System.setProperty("javax.net.ssl.trustStorePassword", "changeit");
-
-        // O tester passa "true" para arranque limpo, "false" para restart com estado
         boolean cleanState = args.length == 0 || Boolean.parseBoolean(args[0]);
         JavaZohoMessages.init(cleanState);
-
         new RestZohoServer().start();
     }
 }

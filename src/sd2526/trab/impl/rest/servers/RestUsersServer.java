@@ -8,30 +8,21 @@ import org.glassfish.jersey.server.ResourceConfig;
 import sd2526.trab.api.java.Users;
 
 public class RestUsersServer extends AbstractRestServer {
-	public static final int PORT = 3456;
-	
-	private static Logger Log = Logger.getLogger(RestUsersServer.class.getName());
+    public static final int PORT = 3456;
 
-	RestUsersServer() throws UnknownHostException {
-		super( Log, Users.SERVICE_NAME , PORT);
-	}
-	
-	@Override
-	void registerResources(ResourceConfig config) {
-		config.register(RestUsersResource.class ); 
-	}
+    private static Logger Log = Logger.getLogger(RestUsersServer.class.getName());
+
+    RestUsersServer() throws UnknownHostException {
+        super(Log, Users.SERVICE_NAME, PORT);
+    }
+
+    @Override
+    void registerResources(ResourceConfig config) {
+        config.register(RestUsersResource.class);
+    }
 
 
-
-	public static void main(String[] args) throws UnknownHostException {
-        String hostName = java.net.InetAddress.getLocalHost().getHostName();
-        String resolvedKeyStore = "/home/sd/" + hostName + ".ks";
-
-        System.setProperty("javax.net.ssl.keyStore", resolvedKeyStore);
-        System.setProperty("javax.net.ssl.keyStorePassword", "password");
-        System.setProperty("javax.net.ssl.trustStore", "/home/sd/truststore.ks");
-        System.setProperty("javax.net.ssl.trustStorePassword", "changeit");
-
-		new RestUsersServer().start();
-	}	
+    public static void main(String[] args) throws UnknownHostException {
+        new RestUsersServer().start();
+    }
 }
