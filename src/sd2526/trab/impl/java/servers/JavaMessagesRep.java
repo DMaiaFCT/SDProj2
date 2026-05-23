@@ -39,8 +39,8 @@ public class JavaMessagesRep extends JavaMessages {
     private final KafkaPublisher publisher;
     private final String myKafkaTopic;
 
-    // Para cada domínio remoto, o maior sid já processado (evita re-entrega)
-    private final ConcurrentHashMap<String, Long> largestSeenRemoteSid = new ConcurrentHashMap<>();
+    // Set of remote message IDs already processed - used for deduplication
+    private final ConcurrentHashMap<String, Boolean> seenRemoteMessageIds = new ConcurrentHashMap<>();
 
     private JavaMessagesRep() {
         myKafkaTopic = "messages-topic-" + THIS_DOMAIN;
@@ -136,6 +136,36 @@ public class JavaMessagesRep extends JavaMessages {
         return ok();
     }
 
+    @Override
+    public Result<Void> remotePostMessage(Message msg) {
+        Log.info(() -> "remotePostMessage (rep): msg=%s\n".formatted(msg));
+
+        // Publish to local Kafka so ALL replicas in this domain receive the remote message.
+        // Without this, only the replica that received the REST call would store it.
+        long offset = publisher.publish(myKafkaTopic, gson.toJson(msg));
+        if (offset < 0) return error(INTERNAL_ERROR);
+
+        SyncPoint.getSyncPoint().waitForResult(offset);
+        return ok();
+    }
+
+    @Override
+    public Result<Void> remoteDeleteMessage(String mid) {
+        Log.info(() -> "remoteDeleteMessage (rep): mid=%s\n".formatted(mid));
+
+        // Build a DELETE token and publish to Kafka so all replicas apply the delete.
+        Message token = new Message();
+        token.setSubject("DELETE");
+        token.setId(mid);
+        token.setSender(THIS_DOMAIN); // not a local address, so remote propagation is skipped
+
+        long offset = publisher.publish(myKafkaTopic, gson.toJson(token));
+        if (offset < 0) return error(INTERNAL_ERROR);
+
+        SyncPoint.getSyncPoint().waitForResult(offset);
+        return ok();
+    }
+
     private void processKafkaEvent(ConsumerRecord<String, String> record) {
         long offset = record.offset();
         Message msg = gson.fromJson(record.value(), Message.class);
@@ -145,16 +175,13 @@ public class JavaMessagesRep extends JavaMessages {
             deleteFromLocalInbox(msg.getId());
 
             // Só a réplica cujo sender é local propaga para domínios remotos
-            if (super.isLocalAddress(msg.getSender())) {
+            if (super.isLocalAddress(msg.senderAddress())) {
                 msg.getDestination().stream()
                         .map(r -> r.split("@")[1])
                         .filter(d -> !d.equals(IP.domain()))
                         .collect(Collectors.toSet())
                         .forEach(domain -> jobs.submit(domain, () ->
-                                super.reTry(() ->
-                                                Clients.AdminMessagesClient.get(domain)
-                                                        .remoteDeleteMessage(msg.getId()),
-                                        90000)));
+                                retryAcrossReplicas(domain, r -> r.remoteDeleteMessage(msg.getId()))));
             }
             VersionHeaderHandler.version.set(offset);
             SyncPoint.getSyncPoint().setResult(offset, msg.getId());
@@ -172,19 +199,12 @@ public class JavaMessagesRep extends JavaMessages {
         String senderDomain = super.getDomain(msg.senderAddress());
 
         if (!super.isLocalDomain(senderDomain)) {
-            try {
-                String[] parts = msg.getId().split("\\+");
-                if (parts.length == 2) {
-                    long sid = Long.parseLong(parts[1]);
-                    long maxSeen = largestSeenRemoteSid.getOrDefault(senderDomain, -1L);
-                    if (sid <= maxSeen) {
-                        SyncPoint.getSyncPoint().setResult(offset, msg.getId());
-                        return;
-                    }
-                    largestSeenRemoteSid.put(senderDomain, sid);
-                }
-            } catch (Exception e) {
-                Log.warning("Não foi possível parsear sid de: " + msg.getId());
+            // Deduplicate: if we've already processed this remote message ID, skip it.
+            // Using a set is correct because remote messages can arrive out of order
+            // (multiple replicas of the sending domain may all forward the same message).
+            if (seenRemoteMessageIds.putIfAbsent(msg.getId(), Boolean.TRUE) != null) {
+                SyncPoint.getSyncPoint().setResult(offset, msg.getId());
+                return;
             }
         }
 
@@ -205,10 +225,7 @@ public class JavaMessagesRep extends JavaMessages {
                     .collect(Collectors.groupingBy(super::getDomain, Collectors.toSet()))
                     .forEach((domain, addrs) ->
                             jobs.submit(domain, () -> {
-                                var res = super.reTry(() ->
-                                                Clients.AdminMessagesClient.get(domain)
-                                                        .remotePostMessage(msg),
-                                        90000);
+                                var res = retryAcrossReplicas(domain, r -> r.remotePostMessage(msg));
                                 if (res.error() == ErrorCode.TIMEOUT)
                                     addrs.forEach(addr ->
                                             postToLocalInboxes(
@@ -222,6 +239,40 @@ public class JavaMessagesRep extends JavaMessages {
         SyncPoint.getSyncPoint().setResult(offset, msg.getId());
     }
 
+
+    /**
+     * Retries a remote operation across all known replicas of a domain.
+     * When a replica is down, tries the next one instead of retrying the same dead replica.
+     * This ensures fault tolerance during replica failures.
+     */
+    private <T> Result<T> retryAcrossReplicas(String domain, java.util.function.Function<sd2526.trab.impl.api.java.AdminMessages, Result<T>> operation) {
+        var sn = "%s@%s".formatted(sd2526.trab.api.java.Messages.SERVICE_NAME, domain);
+        long deadline = System.currentTimeMillis() + 90000;
+
+        while (System.currentTimeMillis() < deadline) {
+            var uris = sd2526.trab.impl.discovery.Discovery.getInstance().knownUrisOf(sn, 1);
+            boolean anyAttempted = false;
+
+            for (var uri : uris) {
+                try {
+                    var client = Clients.AdminMessagesClient.get(uri);
+                    var res = operation.apply(client);
+                    if (res.isOK() || (res.error() != Result.ErrorCode.TIMEOUT && res.error() != Result.ErrorCode.INTERNAL_ERROR)) {
+                        return res;
+                    }
+                    anyAttempted = true;
+                } catch (Exception e) {
+                    // This replica failed, try next
+                    anyAttempted = true;
+                }
+            }
+
+            if (!anyAttempted) break;
+            sd2526.trab.impl.utils.Sleep.ms(500);
+        }
+
+        return Result.error(Result.ErrorCode.TIMEOUT);
+    }
 
     private static volatile JavaMessagesRep instance;
 
