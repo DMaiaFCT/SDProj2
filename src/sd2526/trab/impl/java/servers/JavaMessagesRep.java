@@ -250,27 +250,29 @@ public class JavaMessagesRep extends JavaMessages {
         long deadline = System.currentTimeMillis() + 90000;
 
         while (System.currentTimeMillis() < deadline) {
-            var uris = sd2526.trab.impl.discovery.Discovery.getInstance().knownUrisOf(sn, 1);
-            boolean anyAttempted = false;
+            var uris = sd2526.trab.impl.discovery.Discovery.getInstance().knownUrisOf(sn, 0);
+            java.util.Collections.shuffle(java.util.Arrays.asList(uris));
 
             for (var uri : uris) {
                 try {
-                    var client = Clients.AdminMessagesClient.get(uri);
-                    var res = operation.apply(client);
+                    java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+                    java.util.concurrent.Future<Result<T>> future = executor.submit(() -> {
+                        var client = Clients.AdminMessagesClient.get(uri);
+                        return operation.apply(client);
+                    });
+
+                    Result<T> res = future.get(2, java.util.concurrent.TimeUnit.SECONDS);
+                    executor.shutdownNow();
+
                     if (res.isOK() || (res.error() != Result.ErrorCode.TIMEOUT && res.error() != Result.ErrorCode.INTERNAL_ERROR)) {
                         return res;
                     }
-                    anyAttempted = true;
                 } catch (Exception e) {
-                    // This replica failed, try next
-                    anyAttempted = true;
+                    // This replica is dead or slow. Continue to next URI immediately.
                 }
             }
-
-            if (!anyAttempted) break;
-            sd2526.trab.impl.utils.Sleep.ms(500);
+            sd2526.trab.impl.utils.Sleep.ms(200);
         }
-
         return Result.error(Result.ErrorCode.TIMEOUT);
     }
 
